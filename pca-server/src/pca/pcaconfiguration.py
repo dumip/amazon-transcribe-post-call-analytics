@@ -55,6 +55,10 @@ CONF_REDACTION_TRANSCRIPT = f"{STACK_NAME}-CallRedactionTranscript"
 CONF_REDACTION_AUDIO = f"{STACK_NAME}-CallRedactionAudio"
 CONF_CALL_SUMMARIZATION = f"{STACK_NAME}-CallSummarization"
 
+# GenAI configuration parameters
+CONF_GENAI_LANGS = f"{STACK_NAME}-GenAILanguages"
+CONF_GENAI_MODEL_ID = f"{STACK_NAME}-GenAIModelId"
+
 # Parameter store fieldnames used by bulk import
 BULK_S3_BUCKET = f"{STACK_NAME}-BulkUploadBucket"
 BULK_JOB_LIMIT = f"{STACK_NAME}-BulkUploadMaxTranscribeJobs"

@@ -128,7 +128,7 @@ Resources:
   SentimentAnalysisPromptVersionEN:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: !Sub "/${AWS::StackName}-SentimentAnalysis/en/version"
+      Name: !Sub "${AWS::StackName}-sentiment-analysis-prompt-version-en"
       Type: String
       Value: "1"
       Description: "Version of the Bedrock prompt to use for English sentiment analysis"
@@ -141,7 +141,7 @@ Resources:
   SentimentAnalysisPromptVersionRO:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: !Sub "/${AWS::StackName}-SentimentAnalysis/ro/version"
+      Name: !Sub "${AWS::StackName}-sentiment-analysis-prompt-version-ro"
       Type: String
       Value: "1"
       Description: "Version of the Bedrock prompt to use for Romanian sentiment analysis"
@@ -154,7 +154,7 @@ Resources:
   SentimentAnalysisPromptVersionDefault:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: !Sub "/${AWS::StackName}-SentimentAnalysis/default/version"
+      Name: !Sub "${AWS::StackName}-sentiment-analysis-prompt-version-default"
       Type: String
       Value: "1"
       Description: "Version of the default Bedrock prompt to use when language-specific prompt is not available"
@@ -182,6 +182,6 @@ Outputs:
   SentimentAnalysisPromptVersionParameters:
     Description: "SSM Parameter names for sentiment analysis prompt versions"
     Value: !Sub |
-      English: ${AWS::StackName}-SentimentAnalysis/en/version
-      Romanian: ${AWS::StackName}-SentimentAnalysis/ro/version
-      Default: ${AWS::StackName}-SentimentAnalysis/default/version
+      English: ${AWS::StackName}-sentiment-analysis-prompt-version-en
+      Romanian: ${AWS::StackName}-sentiment-analysis-prompt-version-ro
+      Default: ${AWS::StackName}-sentiment-analysis-prompt-version-default
