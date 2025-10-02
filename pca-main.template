@@ -1042,6 +1042,7 @@ Resources:
     Properties:
       TemplateURL: pca-server/cfn/lib/genai.template
       Parameters:
+        MainStackName: !Ref AWS::StackName
         GenAILanguages: !Ref GenAILanguages
         GenAIAnalysisBedrockModelId: !Ref GenAIAnalysisBedrockModelId
 

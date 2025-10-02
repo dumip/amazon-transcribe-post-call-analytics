@@ -50,15 +50,16 @@ class GenAIAnalytics:
         """
         try:
             # Use CloudFormation stack name in parameter name to match template structure
-            stack_name = os.environ.get('STACK_NAME')
-            # Use kebab-case naming convention: sentiment-analysis-prompt-version-{language}
-            parameter_name = f"{stack_name}-{prompt_type}-prompt-version-{language}"
+            stack_name = cf.STACK_NAME
+            # Use consistent naming convention: pca-{prompt_type}-prompt-version-{language}
+            parameter_name = f"{stack_name}-pca-{prompt_type}-prompt-version-{language}"
             
             response = self.ssm_client.get_parameter(Name=parameter_name)
             return response['Parameter']['Value']
         except ClientError:
             # Fallback to default version
             return "1"
+
     
     def _invoke_bedrock_model(self, prompt, model_id="anthropic.claude-3-5-haiku-20241022-v1:0"):
         """
@@ -154,9 +155,9 @@ class GenAIAnalytics:
             # Get the appropriate prompt version
             prompt_version = self._get_prompt_version("sentiment-analysis", language_code)
             
-            # Get the prompt template from Bedrock Prompt Management
-            # Use CloudFormation naming convention: {StackName}-pca-sentiment-analysis-{language}
-            stack_name = os.environ.get('STACK_NAME')
+            # Get the prompt name using main stack name (passed to nested stack)
+            # This ensures consistent naming regardless of nested stack structure
+            stack_name = cf.STACK_NAME
             prompt_name = f"{stack_name}-pca-sentiment-analysis-{language_code}"
             try:
                 prompt_template = self._get_bedrock_prompt(prompt_name, prompt_version)
