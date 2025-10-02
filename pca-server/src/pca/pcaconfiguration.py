@@ -176,11 +176,19 @@ def loadConfiguration():
         ]
     )
 
+    fullParamList5 = ssm.get_parameters(
+        Names=[
+            CONF_GENAI_LANGS,
+            CONF_GENAI_MODEL_ID
+        ]
+    )
+
     # Extract our parameters into our config
     extractParameters(fullParamList1, False)
     extractParameters(fullParamList2, False)
     extractParameters(fullParamList3, False)
     extractParameters(fullParamList4, False)
+    extractParameters(fullParamList5, False)
 
     # If any important empty values to something
     if (appConfig[CONF_MINNEGATIVE]) == "":

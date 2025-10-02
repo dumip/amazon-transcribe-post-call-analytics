@@ -22,7 +22,7 @@ import boto3
 import time
 
 # Import GenAI analytics module
-from pca_aws_genai_analytics import GenAIAnalytics
+from pcagenaianalytics import GenAIAnalytics
 
 # Sentiment helpers
 MIN_SENTIMENT_LENGTH = 8
@@ -389,32 +389,52 @@ class TranscribeParser:
         Determine if GenAI processing should be used based on language support.
         Sets up GenAI analytics if the detected language is supported by GenAI but not by Comprehend.
         """
-        detected_language = self.analytics.conversationLanguageCode
+        detected_language = getattr(self.analytics, 'conversationLanguageCode', 'unknown') or 'unknown'
+        print(f"[GENAI_SETUP] Starting GenAI processing setup for detected language: {detected_language}")
+        print(f"[GENAI_SETUP] API mode: {self.api_mode}")
         
         try:
             # Get language lists from CloudFormation parameters
             comprehend_languages = cf.appConfig.get(cf.CONF_COMP_LANGS, [])
             genai_languages = cf.appConfig.get(cf.CONF_GENAI_LANGS, [])
             
+            print(f"[GENAI_SETUP] Configured Comprehend languages: {comprehend_languages}")
+            print(f"[GENAI_SETUP] Configured GenAI languages: {genai_languages}")
+            
             # Route based on language support
             if self.api_mode == cf.API_ANALYTICS:
                 # Use existing TCA path (already implemented)
                 # TCA automatically falls back to standard transcribe for unsupported languages
+                print(f"[GENAI_SETUP] Using TCA mode - GenAI processing disabled")
                 self.use_genai_processing = False
             elif any(detected_language.startswith(lang) for lang in comprehend_languages):
                 # Use existing Comprehend path (current implementation)
+                matching_lang = next((lang for lang in comprehend_languages if detected_language.startswith(lang)), None)
+                print(f"[GENAI_SETUP] Language '{detected_language}' matches Comprehend language '{matching_lang}' - using Comprehend")
                 self.use_genai_processing = False
             elif any(detected_language.startswith(lang) for lang in genai_languages):
                 # Set flag to use GenAI processing instead of Comprehend
+                matching_lang = next((lang for lang in genai_languages if detected_language.startswith(lang)), None)
+                print(f"[GENAI_SETUP] Language '{detected_language}' matches GenAI language '{matching_lang}' - enabling GenAI processing")
                 self.use_genai_processing = True
                 self.genai_analytics = GenAIAnalytics()
-                print(f"GenAI processing enabled for language: {detected_language}")
+                print(f"[GENAI_SETUP] GenAI analytics object created successfully")
+                print(f"[GENAI_SETUP] GenAI processing enabled for language: {detected_language}")
             else:
                 # Fallback to Comprehend or neutral sentiment
+                print(f"[GENAI_SETUP] Language '{detected_language}' not supported by Comprehend or GenAI - using fallback")
+                print(f"[GENAI_SETUP] Will use neutral sentiment or basic processing")
                 self.use_genai_processing = False
+            
+            print(f"[GENAI_SETUP] Final GenAI processing state: {self.use_genai_processing}")
+            print(f"[GENAI_SETUP] GenAI analytics object available: {hasattr(self, 'genai_analytics') and self.genai_analytics is not None}")
                 
         except Exception as e:
-            print(f"Error setting up GenAI processing: {str(e)}")
+            print(f"[GENAI_SETUP] Error setting up GenAI processing: {str(e)}")
+            print(f"[GENAI_SETUP] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[GENAI_SETUP] Full traceback: {traceback.format_exc()}")
+            print(f"[GENAI_SETUP] Falling back to disabled GenAI processing")
             self.use_genai_processing = False
 
     def comprehend_single_sentiment(self, text, client):
@@ -541,44 +561,71 @@ class TranscribeParser:
                 # Standard Transcribe requires us to use Comprehend or GenAI
                 else:
                     # Priority order: 1) Comprehend (if supported), 2) GenAI (if supported), 3) Neutral fallback
+                    segment_id = getattr(next_segment, 'segmentId', 'unknown') or 'unknown'
+                    print(f"[SENTIMENT] Starting sentiment analysis for segment {segment_id}")
+                    print(f"[SENTIMENT] Available options - Comprehend language: '{self.comprehendLanguageCode}', GenAI enabled: {self.use_genai_processing}, GenAI analytics: {self.genai_analytics is not None}")
                     
                     # First try Comprehend if we have a language code for it
                     if self.comprehendLanguageCode != "":
+                        print(f"[SENTIMENT] Using Comprehend for sentiment analysis - Language: {self.comprehendLanguageCode}")
                         # Use Comprehend for sentiment analysis
                         sentimentResponse = self.comprehend_single_sentiment(nextText, client)
                         self.process_sentiment_scores(next_segment, sentimentResponse)
+                        print(f"[SENTIMENT] Comprehend sentiment analysis completed for segment {segment_id}")
                     
                     # If Comprehend is not available, try GenAI processing
                     elif self.use_genai_processing and self.genai_analytics:
+                        print(f"[SENTIMENT] Comprehend not available, attempting GenAI sentiment analysis")
+                        print(f"[SENTIMENT] GenAI processing enabled: {self.use_genai_processing}")
+                        print(f"[SENTIMENT] GenAI analytics object available: {self.genai_analytics is not None}")
+                        conv_lang = getattr(self.analytics, 'conversationLanguageCode', 'unknown') or 'unknown'
+                        print(f"[SENTIMENT] Conversation language code: {conv_lang}")
+                        
                         # Use GenAI for sentiment analysis
                         try:
                             # Extract language code for GenAI (e.g., 'ro' from 'ro-RO')
-                            genai_lang_code = self.analytics.conversationLanguageCode.split('-')[0].lower()
+                            genai_lang_code = conv_lang.split('-')[0].lower() if conv_lang != 'unknown' else 'en'
+                            print(f"[SENTIMENT] Extracted GenAI language code: {genai_lang_code}")
                             
                             # Get speaker label for this segment
-                            speaker_label = next_segment.segmentSpeaker
+                            speaker_label = getattr(next_segment, 'segmentSpeaker', 'unknown') or 'unknown'
+                            print(f"[SENTIMENT] Processing segment {segment_id} for speaker: {speaker_label}")
+                            text_len = len(nextText) if nextText else 0
+                            print(f"[SENTIMENT] Text length: {text_len} characters")
                             
                             # Call GenAI sentiment analysis
+                            print(f"[SENTIMENT] Calling GenAI sentiment analysis...")
                             sentimentResponse = self.genai_analytics.genai_sentiment_analysis(
                                 nextText, speaker_label, genai_lang_code
                             )
+                            print(f"[SENTIMENT] GenAI sentiment analysis response received: {sentimentResponse}")
                             
                             # Process GenAI response using common logic
                             self.process_sentiment_scores(next_segment, sentimentResponse)
+                            print(f"[SENTIMENT] GenAI sentiment analysis completed successfully for segment {segment_id}")
                             
                         except Exception as e:
-                            print(f"Error in GenAI sentiment analysis: {str(e)}")
+                            print(f"[SENTIMENT] Error in GenAI sentiment analysis: {str(e)}")
+                            print(f"[SENTIMENT] Exception type: {type(e).__name__}")
+                            import traceback
+                            print(f"[SENTIMENT] Full traceback: {traceback.format_exc()}")
                             # Fallback to neutral sentiment
                             next_segment.segmentAllSentiments = sentiment_set_neutral
                             next_segment.segmentIsPositive = False
                             next_segment.segmentIsNegative = False
+                            print(f"[SENTIMENT] Applied neutral sentiment fallback for segment {segment_id}")
                     
                     # Final fallback: no language support available
                     else:
+                        print(f"[SENTIMENT] No sentiment analysis available - using neutral fallback")
+                        print(f"[SENTIMENT] Comprehend language code: '{self.comprehendLanguageCode}'")
+                        print(f"[SENTIMENT] GenAI processing enabled: {self.use_genai_processing}")
+                        print(f"[SENTIMENT] GenAI analytics available: {self.genai_analytics is not None}")
                         # We had no language support - use default neutral sentiment scores
                         next_segment.segmentAllSentiments = sentiment_set_neutral
                         next_segment.segmentIsPositive = False
                         next_segment.segmentIsNegative = False
+                        print(f"[SENTIMENT] Applied neutral sentiment for segment {segment_id} (no languag (no language support)")
 
                 # If we have a language model then extract entities via Comprehend,
                 # and the same methodology is used for all of the Transcribe modes
