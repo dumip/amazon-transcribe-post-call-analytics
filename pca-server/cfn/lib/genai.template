@@ -127,6 +127,29 @@ Resources:
         Component: "GenAI-SentimentAnalysis" 
         Language: "ro"  
 
+  # Create versions of the prompts (converts drafts to versioned prompts)
+  # English Sentiment Analysis Prompt Version
+  SentimentAnalysisPromptVersionENResource:
+    Type: AWS::Bedrock::PromptVersion
+    Properties:
+      PromptArn: !GetAtt SentimentAnalysisPromptEN.Arn
+      Description: "Version 1 of English sentiment analysis prompt for PCA"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "en"
+
+  # Romanian Sentiment Analysis Prompt Version
+  SentimentAnalysisPromptVersionROResource:
+    Type: AWS::Bedrock::PromptVersion
+    Properties:
+      PromptArn: !GetAtt SentimentAnalysisPromptRO.Arn
+      Description: "Version 1 of Romanian sentiment analysis prompt for PCA"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "ro"
+
   # SSM Parameters for Prompt Version Management
   # English Sentiment Analysis Prompt Version
   SentimentAnalysisPromptVersionEN:
@@ -134,7 +157,7 @@ Resources:
     Properties:
       Name: !Sub "${MainStackName}-pca-sentiment-analysis-prompt-version-en"
       Type: String
-      Value: "1"
+      Value: !GetAtt SentimentAnalysisPromptVersionENResource.Version
       Description: "Version of the Bedrock prompt to use for English sentiment analysis"
       Tags:
         Application: "PostCallAnalytics"
@@ -147,7 +170,7 @@ Resources:
     Properties:
       Name: !Sub "${MainStackName}-pca-sentiment-analysis-prompt-version-ro"
       Type: String
-      Value: "1"
+      Value: !GetAtt SentimentAnalysisPromptVersionROResource.Version
       Description: "Version of the Bedrock prompt to use for Romanian sentiment analysis"
       Tags:
         Application: "PostCallAnalytics"
@@ -160,14 +183,52 @@ Resources:
     Properties:
       Name: !Sub "${MainStackName}-pca-sentiment-analysis-prompt-version-default"
       Type: String
-      Value: "1"
+      Value: !GetAtt SentimentAnalysisPromptVersionENResource.Version
       Description: "Version of the default Bedrock prompt to use when language-specific prompt is not available"
       Tags:
         Application: "PostCallAnalytics"
         Component: "GenAI-SentimentAnalysis"
         Language: "default"
 
+  # SSM Parameters for Prompt ARNs (using specific naming convention)
+  # English Sentiment Analysis Prompt ARN
+  SentimentAnalysisPromptIdentifierEN:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "${MainStackName}-pca-sentiment-analysis-prompt-identifier-en"
+      Type: String
+      Value: !GetAtt SentimentAnalysisPromptEN.Arn
+      Description: "ARN of the Bedrock prompt for English sentiment analysis"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "en"
 
+  # Romanian Sentiment Analysis Prompt ARN
+  SentimentAnalysisPromptIdentifierRO:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "${MainStackName}-pca-sentiment-analysis-prompt-identifier-ro"
+      Type: String
+      Value: !GetAtt SentimentAnalysisPromptRO.Arn
+      Description: "ARN of the Bedrock prompt for Romanian sentiment analysis"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "ro"
+
+  # Default/Fallback Sentiment Analysis Prompt ARN
+  SentimentAnalysisPromptIdentifierDefault:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "${MainStackName}-pca-sentiment-analysis-prompt-identifier-default"
+      Type: String
+      Value: !GetAtt SentimentAnalysisPromptEN.Arn
+      Description: "ARN of the default Bedrock prompt to use when language-specific prompt is not available"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "default"
 
 Outputs:
   # Prompt Names for runtime reference
@@ -196,6 +257,26 @@ Outputs:
     Value: !GetAtt SentimentAnalysisPromptRO.Arn
     Export:
       Name: !Sub "${AWS::StackName}-SentimentAnalysisPromptRO-Arn"
+
+  # Prompt Version ARNs for runtime reference
+  SentimentAnalysisPromptVersionENArn:
+    Description: "ARN of the English sentiment analysis Bedrock prompt version"
+    Value: !Ref SentimentAnalysisPromptVersionENResource
+    Export:
+      Name: !Sub "${AWS::StackName}-SentimentAnalysisPromptVersionEN-Arn"
+
+  SentimentAnalysisPromptVersionROArn:
+    Description: "ARN of the Romanian sentiment analysis Bedrock prompt version"
+    Value: !Ref SentimentAnalysisPromptVersionROResource
+    Export:
+      Name: !Sub "${AWS::StackName}-SentimentAnalysisPromptVersionRO-Arn"
+
+  # Version numbers for reference
+  SentimentAnalysisPromptVersionNumbers:
+    Description: "Version numbers of the sentiment analysis prompts"
+    Value: !Sub |
+      English Version: ${SentimentAnalysisPromptVersionENResource.Version}
+      Romanian Version: ${SentimentAnalysisPromptVersionROResource.Version}
 
   # SSM Parameter Names for easy reference
   SentimentAnalysisPromptVersionParameters:

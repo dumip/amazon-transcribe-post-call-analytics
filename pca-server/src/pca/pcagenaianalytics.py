@@ -37,6 +37,38 @@ class GenAIAnalytics:
             'output_tokens': self.total_output_tokens
         }
     
+    def _get_prompt_parameter(self, prompt_type, language, parameter_type, default_fallback=None):
+        """
+        Get a prompt parameter from SSM Parameter Store.
+        
+        Args:
+            prompt_type: Type of prompt (sentiment-analysis, entity-extraction, etc.)
+            language: Language code (e.g., 'ro', 'de', 'fr')
+            parameter_type: Type of parameter ('version' or 'identifier')
+            default_fallback: Default value to return if parameter not found
+            
+        Returns:
+            str: Parameter value
+        """
+        try:
+            # Use CloudFormation stack name in parameter name to match template structure
+            stack_name = cf.STACK_NAME
+            # Use consistent naming convention: pca-{prompt_type}-prompt-{parameter_type}-{language}
+            parameter_name = f"{stack_name}-pca-{prompt_type}-prompt-{parameter_type}-{language}"
+            
+            response = self.ssm_client.get_parameter(Name=parameter_name)
+            return response['Parameter']['Value']
+        except ClientError:
+            # Fallback to default language if specific language not found
+            try:
+                parameter_name = f"{stack_name}-pca-{prompt_type}-prompt-{parameter_type}-default"
+                response = self.ssm_client.get_parameter(Name=parameter_name)
+                return response['Parameter']['Value']
+            except ClientError:
+                if default_fallback is not None:
+                    return default_fallback
+                raise Exception(f"No prompt {parameter_type} found for {prompt_type} in language {language} or default")
+
     def _get_prompt_version(self, prompt_type, language):
         """
         Get the prompt version from SSM Parameter Store.
@@ -46,19 +78,22 @@ class GenAIAnalytics:
             language: Language code (e.g., 'ro', 'de', 'fr')
             
         Returns:
-            str: Prompt version to use (defaults to 'DEFAULT' if not found)
+            str: Prompt version to use (defaults to '1' if not found)
         """
-        try:
-            # Use CloudFormation stack name in parameter name to match template structure
-            stack_name = cf.STACK_NAME
-            # Use consistent naming convention: pca-{prompt_type}-prompt-version-{language}
-            parameter_name = f"{stack_name}-pca-{prompt_type}-prompt-version-{language}"
+        return self._get_prompt_parameter(prompt_type, language, "version", "1")
+
+    def _get_prompt_identifier(self, prompt_type, language):
+        """
+        Get the prompt identifier (ARN) from SSM Parameter Store.
+        
+        Args:
+            prompt_type: Type of prompt (sentiment-analysis, entity-extraction, etc.)
+            language: Language code (e.g., 'ro', 'de', 'fr')
             
-            response = self.ssm_client.get_parameter(Name=parameter_name)
-            return response['Parameter']['Value']
-        except ClientError:
-            # Fallback to default version
-            return "1"
+        Returns:
+            str: Prompt ARN identifier
+        """
+        return self._get_prompt_parameter(prompt_type, language, "identifier")
 
     
     def _invoke_bedrock_model(self, prompt, model_id="anthropic.claude-3-5-haiku-20241022-v1:0"):
@@ -105,12 +140,12 @@ class GenAIAnalytics:
             print(f"Error invoking Bedrock model: {str(e)}")
             raise e
     
-    def _get_bedrock_prompt(self, prompt_name, version="DEFAULT"):
+    def _get_bedrock_prompt(self, prompt_identifier, version="DEFAULT"):
         """
         Get prompt from Amazon Bedrock Prompt Management.
         
         Args:
-            prompt_name: Name of the prompt in Bedrock Prompt Management
+            prompt_identifier: ARN of the prompt in Bedrock Prompt Management
             version: Version of the prompt to retrieve
             
         Returns:
@@ -121,7 +156,7 @@ class GenAIAnalytics:
             
             # Get the prompt from Bedrock Prompt Management
             response = bedrock_agent_client.get_prompt(
-                promptIdentifier=prompt_name,
+                promptIdentifier=prompt_identifier,
                 promptVersion=version
             )
             
@@ -132,10 +167,10 @@ class GenAIAnalytics:
                 if 'text' in template_configuration:
                     return template_configuration['text']['text']
             
-            raise Exception(f"No prompt text found for {prompt_name}")
+            raise Exception(f"No prompt text found for {prompt_identifier}")
             
         except Exception as e:
-            error_msg = f"Failed to retrieve prompt '{prompt_name}' version '{version}' from Bedrock Prompt Management: {str(e)}"
+            error_msg = f"Failed to retrieve prompt '{prompt_identifier}' version '{version}' from Bedrock Prompt Management: {str(e)}"
             print(f"Error: {error_msg}")
             raise Exception(error_msg)
     
@@ -154,13 +189,10 @@ class GenAIAnalytics:
         try:
             # Get the appropriate prompt version
             prompt_version = self._get_prompt_version("sentiment-analysis", language_code)
+            prompt_identifier = self._get_prompt_identifier("sentiment-analysis", language_code)
             
-            # Get the prompt name using main stack name (passed to nested stack)
-            # This ensures consistent naming regardless of nested stack structure
-            stack_name = cf.STACK_NAME
-            prompt_name = f"{stack_name}-pca-sentiment-analysis-{language_code}"
             try:
-                prompt_template = self._get_bedrock_prompt(prompt_name, prompt_version)
+                prompt_template = self._get_bedrock_prompt(prompt_identifier, prompt_version)
             except Exception as e:
                 raise Exception(f"Cannot perform GenAI sentiment analysis for language '{language_code}': {str(e)}")
             
