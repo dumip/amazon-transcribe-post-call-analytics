@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Amazon Transcribe Post Call Analytics - GenAI Processing
+
+Parameters:
+  GenAILanguages:
+    Type: String
+    Default: "ro"
+    Description: Languages supported by GenAI sentiment analysis, separated by " | "
+
+  GenAIAnalysisBedrockModelId:
+    Type: String
+    Default: "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+    AllowedValues:
+      - anthropic.claude-3-haiku-20240307-v1:0
+      - anthropic.claude-3-sonnet-20240229-v1:0
+      - us.amazon.nova-micro-v1:0
+      - us.amazon.nova-lite-v1:0
+      - us.amazon.nova-pro-v1:0
+      - us.anthropic.claude-3-5-haiku-20241022-v1:0
+      - us.anthropic.claude-3-5-sonnet-20241022-v2:0
+      - eu.anthropic.claude-3-5-sonnet-20240620-v1:0
+      - apac.anthropic.claude-3-5-sonnet-20240620-v1:0
+    Description: Bedrock model to use for GenAI analytics
+
+Resources:
+  # Bedrock Prompt for Sentiment Analysis (English)
+  SentimentAnalysisPromptEN:
+    Type: AWS::Bedrock::Prompt
+    Properties:
+      Name: !Sub "${AWS::StackName}-pca-sentiment-analysis-en"
+      Description: "PCA Sentiment Analysis Prompt for English language segments"
+      DefaultVariant: "default"
+      Variants:
+        - Name: "default"
+          ModelId: !Ref GenAIAnalysisBedrockModelId
+          TemplateType: "TEXT"
+          TemplateConfiguration:
+            Text:
+              Text: |
+                You are an expert call center analyst. Analyze the sentiment of the following speech segment and provide a structured response.
+
+                  **Instructions:**
+                  - Analyze sentiment for this individual speech segment
+                  - Provide sentiment scores on a 0.0 to 5.0 scale (PCA uses 5x scaling factor)
+                  - Set segmentIsPositive=true if sentiment is clearly positive
+                  - Set segmentIsNegative=true if sentiment is clearly negative
+                  - segmentSentimentScore should be the dominant sentiment score
+                  - All scores in segmentAllSentiments must sum to approximately 5.0
+
+                  **Speech Segment:**
+                  Speaker: {{speaker}}
+                  Text: {{segment_text}}
+
+                  **Required JSON Response Format:**
+                  {
+                    "segmentSentimentScore": 4.25,
+                    "segmentPositive": 4.25,
+                    "segmentNegative": 0.75,
+                    "segmentIsPositive": true,
+                    "segmentIsNegative": false,
+                    "segmentAllSentiments": {
+                      "Positive": 4.25,
+                      "Negative": 0.75,
+                      "Neutral": 0.0
+                    }
+                  }
+              InputVariables:
+                - Name: "speaker"
+                - Name: "segment_text"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis" 
+        Language: "en"  
+
+  # SSM Parameters for Prompt Version Management
+  # English Sentiment Analysis Prompt Version
+  SentimentAnalysisPromptVersionEN:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${AWS::StackName}-SentimentAnalysis/en/version"
+      Type: String
+      Value: "1"
+      Description: "Version of the Bedrock prompt to use for English sentiment analysis"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "en"
+
+  # Default/Fallback Sentiment Analysis Prompt Version
+  SentimentAnalysisPromptVersionDefault:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${AWS::StackName}-SentimentAnalysis/default/version"
+      Type: String
+      Value: "1"
+      Description: "Version of the default Bedrock prompt to use when language-specific prompt is not available"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "default"
+
+Outputs:
+  # Prompt ARNs for reference
+  SentimentAnalysisPromptENArn:
+    Description: "ARN of the English sentiment analysis Bedrock prompt"
+    Value: !GetAtt SentimentAnalysisPromptEN.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-SentimentAnalysisPromptEN-Arn"
+
+  # SSM Parameter Names for easy reference
+  SentimentAnalysisPromptVersionParameters:
+    Description: "SSM Parameter names for sentiment analysis prompt versions"
+    Value: !Sub |
+      English: ${AWS::StackName}-SentimentAnalysis/en/version
+      Default: ${AWS::StackName}-SentimentAnalysis/default/version
