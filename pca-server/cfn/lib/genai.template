@@ -73,6 +73,56 @@ Resources:
         Component: "GenAI-SentimentAnalysis" 
         Language: "en"  
 
+  # Bedrock Prompt for Sentiment Analysis (Romanian)
+  SentimentAnalysisPromptRO:
+    Type: AWS::Bedrock::Prompt
+    Properties:
+      Name: !Sub "${AWS::StackName}-pca-sentiment-analysis-ro"
+      Description: "PCA Sentiment Analysis Prompt for Romanian language segments"
+      DefaultVariant: "default"
+      Variants:
+        - Name: "default"
+          ModelId: !Ref GenAIAnalysisBedrockModelId
+          TemplateType: "TEXT"
+          TemplateConfiguration:
+            Text:
+              Text: |
+                You are an expert call center analyst. Analyze the sentiment of the following Romanian speech segment and provide a structured response.
+
+                  **Instructions:**
+                  - Analyze sentiment for this individual Romanian speech segment
+                  - Consider Romanian cultural context and language nuances in your analysis
+                  - Provide sentiment scores on a 0.0 to 5.0 scale (PCA uses 5x scaling factor)
+                  - Set segmentIsPositive=true if sentiment is clearly positive
+                  - Set segmentIsNegative=true if sentiment is clearly negative
+                  - segmentSentimentScore should be the dominant sentiment score
+                  - All scores in segmentAllSentiments must sum to approximately 5.0
+
+                  **Romanian Speech Segment:**
+                  Speaker: {{speaker}}
+                  Text: {{segment_text}}
+
+                  **Required JSON Response Format:**
+                  {
+                    "segmentSentimentScore": 4.25,
+                    "segmentPositive": 4.25,
+                    "segmentNegative": 0.75,
+                    "segmentIsPositive": true,
+                    "segmentIsNegative": false,
+                    "segmentAllSentiments": {
+                      "Positive": 4.25,
+                      "Negative": 0.75,
+                      "Neutral": 0.0
+                    }
+                  }
+              InputVariables:
+                - Name: "speaker"
+                - Name: "segment_text"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis" 
+        Language: "ro"  
+
   # SSM Parameters for Prompt Version Management
   # English Sentiment Analysis Prompt Version
   SentimentAnalysisPromptVersionEN:
@@ -86,6 +136,19 @@ Resources:
         Application: "PostCallAnalytics"
         Component: "GenAI-SentimentAnalysis"
         Language: "en"
+
+  # Romanian Sentiment Analysis Prompt Version
+  SentimentAnalysisPromptVersionRO:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${AWS::StackName}-SentimentAnalysis/ro/version"
+      Type: String
+      Value: "1"
+      Description: "Version of the Bedrock prompt to use for Romanian sentiment analysis"
+      Tags:
+        Application: "PostCallAnalytics"
+        Component: "GenAI-SentimentAnalysis"
+        Language: "ro"
 
   # Default/Fallback Sentiment Analysis Prompt Version
   SentimentAnalysisPromptVersionDefault:
@@ -108,9 +171,17 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-SentimentAnalysisPromptEN-Arn"
 
+  # Romanian Sentiment Analysis Prompt ARN
+  SentimentAnalysisPromptROArn:
+    Description: "ARN of the Romanian sentiment analysis Bedrock prompt"
+    Value: !GetAtt SentimentAnalysisPromptRO.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-SentimentAnalysisPromptRO-Arn"
+
   # SSM Parameter Names for easy reference
   SentimentAnalysisPromptVersionParameters:
     Description: "SSM Parameter names for sentiment analysis prompt versions"
     Value: !Sub |
       English: ${AWS::StackName}-SentimentAnalysis/en/version
+      Romanian: ${AWS::StackName}-SentimentAnalysis/ro/version
       Default: ${AWS::StackName}-SentimentAnalysis/default/version
