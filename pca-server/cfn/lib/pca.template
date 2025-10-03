@@ -206,6 +206,7 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - arn:aws:iam::aws:policy/ComprehendFullAccess
         - arn:aws:iam::aws:policy/AmazonKendraFullAccess
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
 
   SFFinalProcessing:
     Type: AWS::Serverless::Function

@@ -21,6 +21,9 @@ import csv
 import boto3
 import time
 
+# Import GenAI analytics module
+from pcagenaianalytics import GenAIAnalytics
+
 # Sentiment helpers
 MIN_SENTIMENT_LENGTH = 8
 NLP_THROTTLE_RETRIES = 1
@@ -56,6 +59,8 @@ class TranscribeParser:
         self.api_mode = cf.API_STANDARD
         self.analytics_channel_map = {}
         self.asr_output = ""
+        self.use_genai_processing = False
+        self.genai_analytics = None
 
         cf.loadConfiguration()
 
@@ -350,6 +355,88 @@ class TranscribeParser:
             # If anything fails - e.g. no language  string - then we have no language for Comprehend
             self.comprehendLanguageCode = ""
 
+    def process_sentiment_scores(self, next_segment, sentiment_response):
+        """
+        Process sentiment scores and set segment properties based on thresholds.
+        Common logic for both Comprehend and GenAI sentiment analysis.
+        
+        Args:
+            next_segment: The speech segment to update
+            sentiment_response: Response from sentiment analysis (Comprehend or GenAI format)
+        """
+        positiveBase = sentiment_response["SentimentScore"]["Positive"]
+        negativeBase = sentiment_response["SentimentScore"]["Negative"]
+
+        # If we're over the NEGATIVE threshold then we're negative
+        if negativeBase >= self.min_sentiment_negative:
+            next_segment.segmentSentiment = "Negative"
+            next_segment.segmentIsNegative = True
+            next_segment.segmentSentimentScore = negativeBase
+        # Else if we're over the POSITIVE threshold then we're positive,
+        # otherwise we're NEUTRAL and we don't really care
+        elif positiveBase >= self.min_sentiment_positive:
+            next_segment.segmentSentiment = "Positive"
+            next_segment.segmentIsPositive = True
+            next_segment.segmentSentimentScore = positiveBase
+
+        # Store all of the original sentiments for future use
+        next_segment.segmentAllSentiments = sentiment_response["SentimentScore"]
+        next_segment.segmentPositive = positiveBase
+        next_segment.segmentNegative = negativeBase
+
+    def setup_genai_processing(self):
+        """
+        Determine if GenAI processing should be used based on language support.
+        Sets up GenAI analytics if the detected language is supported by GenAI but not by Comprehend.
+        """
+        detected_language = getattr(self.analytics, 'conversationLanguageCode', 'unknown') or 'unknown'
+        print(f"[GENAI_SETUP] Starting GenAI processing setup for detected language: {detected_language}")
+        print(f"[GENAI_SETUP] API mode: {self.api_mode}")
+        
+        try:
+            # Get language lists from CloudFormation parameters
+            comprehend_languages = cf.appConfig.get(cf.CONF_COMP_LANGS, [])
+            genai_languages = cf.appConfig.get(cf.CONF_GENAI_LANGS, [])
+            
+            print(f"[GENAI_SETUP] Configured Comprehend languages: {comprehend_languages}")
+            print(f"[GENAI_SETUP] Configured GenAI languages: {genai_languages}")
+            
+            # Route based on language support
+            if self.api_mode == cf.API_ANALYTICS:
+                # Use existing TCA path (already implemented)
+                # TCA automatically falls back to standard transcribe for unsupported languages
+                print(f"[GENAI_SETUP] Using TCA mode - GenAI processing disabled")
+                self.use_genai_processing = False
+            elif any(detected_language.startswith(lang) for lang in comprehend_languages):
+                # Use existing Comprehend path (current implementation)
+                matching_lang = next((lang for lang in comprehend_languages if detected_language.startswith(lang)), None)
+                print(f"[GENAI_SETUP] Language '{detected_language}' matches Comprehend language '{matching_lang}' - using Comprehend")
+                self.use_genai_processing = False
+            elif any(detected_language.startswith(lang) for lang in genai_languages):
+                # Set flag to use GenAI processing instead of Comprehend
+                matching_lang = next((lang for lang in genai_languages if detected_language.startswith(lang)), None)
+                print(f"[GENAI_SETUP] Language '{detected_language}' matches GenAI language '{matching_lang}' - enabling GenAI processing")
+                self.use_genai_processing = True
+                self.genai_analytics = GenAIAnalytics()
+                print(f"[GENAI_SETUP] GenAI analytics object created successfully")
+                print(f"[GENAI_SETUP] GenAI processing enabled for language: {detected_language}")
+            else:
+                # Fallback to Comprehend or neutral sentiment
+                print(f"[GENAI_SETUP] Language '{detected_language}' not supported by Comprehend or GenAI - using fallback")
+                print(f"[GENAI_SETUP] Will use neutral sentiment or basic processing")
+                self.use_genai_processing = False
+            
+            print(f"[GENAI_SETUP] Final GenAI processing state: {self.use_genai_processing}")
+            print(f"[GENAI_SETUP] GenAI analytics object available: {hasattr(self, 'genai_analytics') and self.genai_analytics is not None}")
+                
+        except Exception as e:
+            print(f"[GENAI_SETUP] Error setting up GenAI processing: {str(e)}")
+            print(f"[GENAI_SETUP] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[GENAI_SETUP] Full traceback: {traceback.format_exc()}")
+            print(f"[GENAI_SETUP] Falling back to disabled GenAI processing")
+            self.use_genai_processing = False
+
     def comprehend_single_sentiment(self, text, client):
         """
         Perform sentiment analysis, but try and avert throttling by trying one more time if this exceptions.
@@ -471,36 +558,74 @@ class TranscribeParser:
                         next_segment.segmentAllSentiments = sentiment_set_negative
                     else:
                         next_segment.segmentAllSentiments = sentiment_set_neutral
-                # Standard Transcribe requires us to use Comprehend
+                # Standard Transcribe requires us to use Comprehend or GenAI
                 else:
-                    # We can only use Comprehend if we have a language code
-                    if self.comprehendLanguageCode == "":
-                        # We had no language - use default neutral sentiment scores
+                    # Priority order: 1) Comprehend (if supported), 2) GenAI (if supported), 3) Neutral fallback
+                    segment_id = getattr(next_segment, 'segmentId', 'unknown') or 'unknown'
+                    print(f"[SENTIMENT] Starting sentiment analysis for segment {segment_id}")
+                    print(f"[SENTIMENT] Available options - Comprehend language: '{self.comprehendLanguageCode}', GenAI enabled: {self.use_genai_processing}, GenAI analytics: {self.genai_analytics is not None}")
+                    
+                    # First try Comprehend if we have a language code for it
+                    if self.comprehendLanguageCode != "":
+                        print(f"[SENTIMENT] Using Comprehend for sentiment analysis - Language: {self.comprehendLanguageCode}")
+                        # Use Comprehend for sentiment analysis
+                        sentimentResponse = self.comprehend_single_sentiment(nextText, client)
+                        self.process_sentiment_scores(next_segment, sentimentResponse)
+                        print(f"[SENTIMENT] Comprehend sentiment analysis completed for segment {segment_id}")
+                    
+                    # If Comprehend is not available, try GenAI processing
+                    elif self.use_genai_processing and self.genai_analytics:
+                        print(f"[SENTIMENT] Comprehend not available, attempting GenAI sentiment analysis")
+                        print(f"[SENTIMENT] GenAI processing enabled: {self.use_genai_processing}")
+                        print(f"[SENTIMENT] GenAI analytics object available: {self.genai_analytics is not None}")
+                        conv_lang = getattr(self.analytics, 'conversationLanguageCode', 'unknown') or 'unknown'
+                        print(f"[SENTIMENT] Conversation language code: {conv_lang}")
+                        
+                        # Use GenAI for sentiment analysis
+                        try:
+                            # Extract language code for GenAI (e.g., 'ro' from 'ro-RO')
+                            genai_lang_code = conv_lang.split('-')[0].lower() if conv_lang != 'unknown' else 'en'
+                            print(f"[SENTIMENT] Extracted GenAI language code: {genai_lang_code}")
+                            
+                            # Get speaker label for this segment
+                            speaker_label = getattr(next_segment, 'segmentSpeaker', 'unknown') or 'unknown'
+                            print(f"[SENTIMENT] Processing segment {segment_id} for speaker: {speaker_label}")
+                            text_len = len(nextText) if nextText else 0
+                            print(f"[SENTIMENT] Text length: {text_len} characters")
+                            
+                            # Call GenAI sentiment analysis
+                            print(f"[SENTIMENT] Calling GenAI sentiment analysis...")
+                            sentimentResponse = self.genai_analytics.genai_sentiment_analysis(
+                                nextText, speaker_label, genai_lang_code
+                            )
+                            print(f"[SENTIMENT] GenAI sentiment analysis response received: {sentimentResponse}")
+                            
+                            # Process GenAI response using common logic
+                            self.process_sentiment_scores(next_segment, sentimentResponse)
+                            print(f"[SENTIMENT] GenAI sentiment analysis completed successfully for segment {segment_id}")
+                            
+                        except Exception as e:
+                            print(f"[SENTIMENT] Error in GenAI sentiment analysis: {str(e)}")
+                            print(f"[SENTIMENT] Exception type: {type(e).__name__}")
+                            import traceback
+                            print(f"[SENTIMENT] Full traceback: {traceback.format_exc()}")
+                            # Fallback to neutral sentiment
+                            next_segment.segmentAllSentiments = sentiment_set_neutral
+                            next_segment.segmentIsPositive = False
+                            next_segment.segmentIsNegative = False
+                            print(f"[SENTIMENT] Applied neutral sentiment fallback for segment {segment_id}")
+                    
+                    # Final fallback: no language support available
+                    else:
+                        print(f"[SENTIMENT] No sentiment analysis available - using neutral fallback")
+                        print(f"[SENTIMENT] Comprehend language code: '{self.comprehendLanguageCode}'")
+                        print(f"[SENTIMENT] GenAI processing enabled: {self.use_genai_processing}")
+                        print(f"[SENTIMENT] GenAI analytics available: {self.genai_analytics is not None}")
+                        # We had no language support - use default neutral sentiment scores
                         next_segment.segmentAllSentiments = sentiment_set_neutral
                         next_segment.segmentIsPositive = False
                         next_segment.segmentIsNegative = False
-                    else:
-                        # For Standard Transcribe we need to set the sentiment marker based on score thresholds
-                        sentimentResponse = self.comprehend_single_sentiment(nextText, client)
-                        positiveBase = sentimentResponse["SentimentScore"]["Positive"]
-                        negativeBase = sentimentResponse["SentimentScore"]["Negative"]
-
-                        # If we're over the NEGATIVE threshold then we're negative
-                        if negativeBase >= self.min_sentiment_negative:
-                            next_segment.segmentSentiment = "Negative"
-                            next_segment.segmentIsNegative = True
-                            next_segment.segmentSentimentScore = negativeBase
-                        # Else if we're over the POSITIVE threshold then we're positive,
-                        # otherwise we're NEUTRAL and we don't really care
-                        elif positiveBase >= self.min_sentiment_positive:
-                            next_segment.segmentSentiment = "Positive"
-                            next_segment.segmentIsPositive = True
-                            next_segment.segmentSentimentScore = positiveBase
-
-                        # Store all of the original sentiments for future use
-                        next_segment.segmentAllSentiments = sentimentResponse["SentimentScore"]
-                        next_segment.segmentPositive = positiveBase
-                        next_segment.segmentNegative = negativeBase
+                        print(f"[SENTIMENT] Applied neutral sentiment for segment {segment_id} (no languag (no language support)")
 
                 # If we have a language model then extract entities via Comprehend,
                 # and the same methodology is used for all of the Transcribe modes
@@ -1155,6 +1280,10 @@ class TranscribeParser:
 
         # Before we process, let's load up any required simply entity map, which needs the base language code
         self.set_comprehend_language_code()
+        
+        # Setup GenAI processing if needed based on language support
+        self.setup_genai_processing()
+        
         self.load_simple_entity_string_map()
 
         # Now create turn-by-turn diarisation, with associated sentiments and entities

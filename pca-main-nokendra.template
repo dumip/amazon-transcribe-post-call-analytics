@@ -463,6 +463,34 @@ Parameters:
     Description: >
       (Optional) If 'CallSummarization' is LAMBDA, provide ARN for a Lambda function.
 
+  GenAILanguages:
+    Type: String
+    Default: "ro"
+    Description: Languages supported by GenAI sentiment analysis, separated by " | "
+
+  GenAIAnalysisBedrockModelId:
+    Type: String
+    Default: "us.amazon.nova-pro-v1:0"
+    AllowedValues:
+      - anthropic.claude-3-haiku-20240307-v1:0
+      - anthropic.claude-3-sonnet-20240229-v1:0
+      - us.amazon.nova-micro-v1:0
+      - us.amazon.nova-lite-v1:0
+      - us.amazon.nova-pro-v1:0
+      - us.anthropic.claude-3-5-haiku-20241022-v1:0
+      - us.anthropic.claude-3-5-sonnet-20241022-v2:0
+      - eu.anthropic.claude-3-5-sonnet-20240620-v1:0
+      - apac.anthropic.claude-3-5-sonnet-20240620-v1:0
+    Description: Bedrock model to use for GenAI analytics
+
+  EnableGenAIAnalysis:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable GenAI-powered analytics for unsupported languages
+
 Metadata:
     AWS::CloudFormation::Interface:
         ParameterGroups:
@@ -497,6 +525,12 @@ Metadata:
               Parameters:
                 - GenAIQuery
                 - GenAIQueryBedrockModelId
+            - Label:
+                default: GenAI Analytics
+              Parameters:
+                - EnableGenAIAnalysis
+                - GenAILanguages
+                - GenAIAnalysisBedrockModelId
             - Label:
                 default: Advanced analytics and reporting
               Parameters:
@@ -605,6 +639,7 @@ Conditions:
     ], 
     !Equals [!Ref TestBedrockModelId, 'true']
   ]
+  ShouldEnableGenAIAnalysis: !Equals [!Ref EnableGenAIAnalysis, "true"]
 
 Resources:
   ########################################################
@@ -814,11 +849,27 @@ Resources:
       TemplateURL: pca-server/cfn/lib/llm.template
 
   ########################################################
+  # GenAI Stack - Bedrock Prompt Management
+  ########################################################
+  PCAGenAI:
+    Type: AWS::CloudFormation::Stack
+    Condition: ShouldEnableGenAIAnalysis
+    DependsOn: LLMPromptConfigure
+    Properties:
+      TemplateURL: pca-server/cfn/lib/genai.template
+      Parameters:
+        MainStackName: !Ref AWS::StackName
+        GenAILanguages: !Ref GenAILanguages
+        GenAIAnalysisBedrockModelId: !Ref GenAIAnalysisBedrockModelId
+
+  ########################################################
   # SSM Stack
   ########################################################
   SSM:
     Type: AWS::CloudFormation::Stack
-    DependsOn: LLMPromptConfigure
+    DependsOn: 
+      - LLMPromptConfigure
+      - PCAGenAI
     Properties:
       TemplateURL: pca-ssm/cfn/ssm.template
       Parameters:
@@ -885,6 +936,9 @@ Resources:
           - ShouldEnableKendraSearch
           - 'None'
           - 'None'
+        GenAILanguages: !Ref GenAILanguages
+        GenAIAnalysisBedrockModelId: !Ref GenAIAnalysisBedrockModelId
+        EnableGenAIAnalysis: !Ref EnableGenAIAnalysis
         # WebUri: !GetAtt PCAUI.Outputs.WebUri
         DatabaseName: !Ref PCADatabase
 

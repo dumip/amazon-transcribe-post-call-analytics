@@ -55,6 +55,10 @@ CONF_REDACTION_TRANSCRIPT = f"{STACK_NAME}-CallRedactionTranscript"
 CONF_REDACTION_AUDIO = f"{STACK_NAME}-CallRedactionAudio"
 CONF_CALL_SUMMARIZATION = f"{STACK_NAME}-CallSummarization"
 
+# GenAI configuration parameters
+CONF_GENAI_LANGS = f"{STACK_NAME}-GenAILanguages"
+CONF_GENAI_MODEL_ID = f"{STACK_NAME}-GenAIModelId"
+
 # Parameter store fieldnames used by bulk import
 BULK_S3_BUCKET = f"{STACK_NAME}-BulkUploadBucket"
 BULK_JOB_LIMIT = f"{STACK_NAME}-BulkUploadMaxTranscribeJobs"
@@ -172,11 +176,19 @@ def loadConfiguration():
         ]
     )
 
+    fullParamList5 = ssm.get_parameters(
+        Names=[
+            CONF_GENAI_LANGS,
+            CONF_GENAI_MODEL_ID
+        ]
+    )
+
     # Extract our parameters into our config
     extractParameters(fullParamList1, False)
     extractParameters(fullParamList2, False)
     extractParameters(fullParamList3, False)
     extractParameters(fullParamList4, False)
+    extractParameters(fullParamList5, False)
 
     # If any important empty values to something
     if (appConfig[CONF_MINNEGATIVE]) == "":
