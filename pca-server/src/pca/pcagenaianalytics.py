@@ -32,10 +32,12 @@ class GenAIAnalytics:
         Returns:
             dict: Dictionary with 'input_tokens' and 'output_tokens' counts
         """
-        return {
+        consumption = {
             'input_tokens': self.total_input_tokens,
             'output_tokens': self.total_output_tokens
         }
+        print(f"Total Bedrock token consumption - Input: {self.total_input_tokens}, Output: {self.total_output_tokens}")
+        return consumption
     
     def _get_prompt_parameter(self, prompt_type, language, parameter_type, default_fallback=None):
         """
@@ -96,83 +98,83 @@ class GenAIAnalytics:
         return self._get_prompt_parameter(prompt_type, language, "identifier")
 
     
-    def _invoke_bedrock_model(self, prompt, model_id="anthropic.claude-3-5-haiku-20241022-v1:0"):
+    def _invoke_bedrock_prompt(self, prompt_arn, variables):
         """
-        Invoke Bedrock model with the given prompt.
+        Invoke Bedrock using a prompt ARN with variables using the Converse API.
         
         Args:
-            prompt: The prompt to send to the model
-            model_id: The Bedrock model ID to use
+            prompt_arn: ARN of the prompt version from Bedrock Prompt Management
+            variables: Dictionary of variables to substitute in the prompt
             
         Returns:
             dict: Response from the model
         """
         try:
-            # Prepare the request body for Claude
-            request_body = {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1000,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            }
+            print(f"Invoking Bedrock prompt: {prompt_arn}")
             
-            # Invoke the model
-            response = self.bedrock_client.invoke_model(
-                modelId=model_id,
-                body=json.dumps(request_body)
+            # Convert variables to the format expected by Converse API
+            prompt_variables = {}
+            for key, value in variables.items():
+                prompt_variables[key] = {"text": str(value)}
+            
+            # Use Converse API with prompt ARN and variables
+            response = self.bedrock_client.converse(
+                modelId=prompt_arn,
+                promptVariables=prompt_variables,
+                messages=[]  # Empty messages since we're using a prompt
             )
             
-            # Parse the response
-            response_body = json.loads(response['body'].read())
+            # Track and log token usage
+            if 'usage' in response:
+                input_tokens = response['usage'].get('inputTokens', 0)
+                output_tokens = response['usage'].get('outputTokens', 0)
+                self.total_input_tokens += input_tokens
+                self.total_output_tokens += output_tokens
+                print(f"Bedrock token usage - Input: {input_tokens}, Output: {output_tokens}")
             
-            # Track token usage
-            if 'usage' in response_body:
-                self.total_input_tokens += response_body['usage'].get('input_tokens', 0)
-                self.total_output_tokens += response_body['usage'].get('output_tokens', 0)
-            
-            return response_body
+            print(f"Bedrock prompt invocation completed successfully")
+            return response
             
         except Exception as e:
-            print(f"Error invoking Bedrock model: {str(e)}")
+            print(f"Error invoking Bedrock prompt {prompt_arn}: {str(e)}")
             raise e
     
-    def _get_bedrock_prompt(self, prompt_identifier, version="DEFAULT"):
+    def _get_prompt_arn(self, prompt_type, language):
         """
-        Get prompt from Amazon Bedrock Prompt Management.
+        Get the complete prompt ARN including version from SSM Parameter Store.
         
         Args:
-            prompt_identifier: ARN of the prompt in Bedrock Prompt Management
-            version: Version of the prompt to retrieve
+            prompt_type: Type of prompt (sentiment-analysis, entity-extraction, etc.)
+            language: Language code (e.g., 'ro', 'de', 'fr')
             
         Returns:
-            str: The prompt template
+            str: Complete prompt ARN with version (e.g., arn:aws:bedrock:region:account:prompt/id:version)
         """
         try:
-            bedrock_agent_client = boto3.client('bedrock-agent')
+            prompt_identifier = self._get_prompt_identifier(prompt_type, language)
+            prompt_version = self._get_prompt_version(prompt_type, language)
             
-            # Get the prompt from Bedrock Prompt Management
-            response = bedrock_agent_client.get_prompt(
-                promptIdentifier=prompt_identifier,
-                promptVersion=version
-            )
+            # Construct the full ARN with version
+            if ':' in prompt_version:
+                # Version is already included in the ARN
+                full_arn = prompt_identifier
+            else:
+                # Append version to the ARN
+                full_arn = f"{prompt_identifier}:{prompt_version}"
             
-            # Extract the prompt text from the response
-            variants = response['variants']
-            if variants and len(variants) > 0:
-                template_configuration = variants[0].get('templateConfiguration', {})
-                if 'text' in template_configuration:
-                    return template_configuration['text']['text']
+            # Validate ARN format
+            if not full_arn.startswith('arn:aws:bedrock:'):
+                raise Exception(f"Invalid prompt ARN format: {full_arn}")
             
-            raise Exception(f"No prompt text found for {prompt_identifier}")
+            if ':prompt/' not in full_arn:
+                raise Exception(f"ARN does not contain ':prompt/' segment: {full_arn}")
             
+            print(f"Retrieved prompt ARN for {prompt_type} ({language}): {full_arn}")
+            return full_arn
+                
         except Exception as e:
-            error_msg = f"Failed to retrieve prompt '{prompt_identifier}' version '{version}' from Bedrock Prompt Management: {str(e)}"
-            print(f"Error: {error_msg}")
-            raise Exception(error_msg)
+            print(f"Failed to get prompt ARN for {prompt_type} in language '{language}': {str(e)}")
+            raise Exception(f"Cannot get prompt ARN for {prompt_type} in language '{language}': {str(e)}")
     
     def genai_sentiment_analysis(self, text, speaker, language_code):
         """
@@ -187,24 +189,22 @@ class GenAIAnalytics:
             dict: Sentiment analysis results compatible with Comprehend format
         """
         try:
-            # Get the appropriate prompt version
-            prompt_version = self._get_prompt_version("sentiment-analysis", language_code)
-            prompt_identifier = self._get_prompt_identifier("sentiment-analysis", language_code)
+            print(f"Starting GenAI sentiment analysis for language: {language_code}")
             
-            try:
-                prompt_template = self._get_bedrock_prompt(prompt_identifier, prompt_version)
-            except Exception as e:
-                raise Exception(f"Cannot perform GenAI sentiment analysis for language '{language_code}': {str(e)}")
+            # Get the prompt ARN with version
+            prompt_arn = self._get_prompt_arn("sentiment-analysis", language_code)
             
-            # Replace variables in the prompt
-            prompt = prompt_template.replace("{{speaker}}", speaker)
-            prompt = prompt.replace("{{segment_text}}", text)
+            # Prepare variables for the prompt
+            variables = {
+                "speaker": speaker,
+                "segment_text": text
+            }
             
-            # Invoke the model
-            response = self._invoke_bedrock_model(prompt)
+            # Invoke the prompt directly using Bedrock Prompt Management
+            response = self._invoke_bedrock_prompt(prompt_arn, variables)
             
-            # Extract the JSON response from the model output
-            content = response['content'][0]['text']
+            # Extract the JSON response from the model output (Converse API format)
+            content = response['output']['message']['content'][0]['text']
             
             # Parse the JSON response
             try:
@@ -232,10 +232,11 @@ class GenAIAnalytics:
                 }
             }
             
+            print(f"GenAI sentiment analysis completed - Sentiment: {comprehend_response['Sentiment']}")
             return comprehend_response
             
         except Exception as e:
-            print(f"Error in GenAI sentiment analysis: {str(e)}")
+            print(f"Error in GenAI sentiment analysis for language {language_code}: {str(e)}")
             return self._get_neutral_sentiment_response()
     
     def _get_neutral_sentiment_response(self):
@@ -266,8 +267,26 @@ class GenAIAnalytics:
         Returns:
             dict: Entity extraction results compatible with Comprehend format
         """
-        # Placeholder implementation - to be implemented later
-        return {"Entities": []}
+        try:
+            # Get the prompt ARN with version
+            prompt_arn = self._get_prompt_arn("entity-extraction", language_code)
+            
+            # Prepare variables for the prompt
+            variables = {
+                "speaker": speaker,
+                "segment_text": text
+            }
+            
+            # Invoke the prompt directly using Bedrock Prompt Management
+            response = self._invoke_bedrock_prompt(prompt_arn, variables)
+            
+            # TODO: Parse response and convert to Comprehend format
+            # For now, return empty entities
+            return {"Entities": []}
+            
+        except Exception as e:
+            print(f"Error in GenAI entity extraction: {str(e)}")
+            return {"Entities": []}
     
     def genai_pii_detection(self, text, speaker, language_code):
         """
@@ -281,8 +300,26 @@ class GenAIAnalytics:
         Returns:
             dict: PII detection results
         """
-        # Placeholder implementation - to be implemented later
-        return {"piiEntities": [], "maskedSegmentText": text}
+        try:
+            # Get the prompt ARN with version
+            prompt_arn = self._get_prompt_arn("pii-detection", language_code)
+            
+            # Prepare variables for the prompt
+            variables = {
+                "speaker": speaker,
+                "segment_text": text
+            }
+            
+            # Invoke the prompt directly using Bedrock Prompt Management
+            response = self._invoke_bedrock_prompt(prompt_arn, variables)
+            
+            # TODO: Parse response and convert to expected format
+            # For now, return no PII detected
+            return {"piiEntities": [], "maskedSegmentText": text}
+            
+        except Exception as e:
+            print(f"Error in GenAI PII detection: {str(e)}")
+            return {"piiEntities": [], "maskedSegmentText": text}
     
     def genai_category_assignment(self, transcript, language_code):
         """
@@ -295,12 +332,36 @@ class GenAIAnalytics:
         Returns:
             dict: Category assignment results
         """
-        # Placeholder implementation - to be implemented later
-        return {
-            "primaryCategory": "GENERAL_INQUIRY",
-            "primaryConfidence": 0.5,
-            "secondaryCategories": [],
-            "reasoning": "Default category assignment",
-            "callOutcome": "UNRESOLVED",
-            "customerSatisfaction": "NEUTRAL"
-        }
+        try:
+            # Get the prompt ARN with version
+            prompt_arn = self._get_prompt_arn("category-assignment", language_code)
+            
+            # Prepare variables for the prompt
+            variables = {
+                "transcript": transcript
+            }
+            
+            # Invoke the prompt directly using Bedrock Prompt Management
+            response = self._invoke_bedrock_prompt(prompt_arn, variables)
+            
+            # TODO: Parse response and convert to expected format
+            # For now, return default category assignment
+            return {
+                "primaryCategory": "GENERAL_INQUIRY",
+                "primaryConfidence": 0.5,
+                "secondaryCategories": [],
+                "reasoning": "Default category assignment",
+                "callOutcome": "UNRESOLVED",
+                "customerSatisfaction": "NEUTRAL"
+            }
+            
+        except Exception as e:
+            print(f"Error in GenAI category assignment: {str(e)}")
+            return {
+                "primaryCategory": "GENERAL_INQUIRY",
+                "primaryConfidence": 0.5,
+                "secondaryCategories": [],
+                "reasoning": "Default category assignment",
+                "callOutcome": "UNRESOLVED",
+                "customerSatisfaction": "NEUTRAL"
+            }
